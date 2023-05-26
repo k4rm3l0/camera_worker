@@ -132,7 +132,7 @@ class WorkerController<T> {
 
 /// The worker method used from Isolate.
 void _workerMethod(Stream<WorkerData> message) {
-  void _rotate(int orientation, int width, int height, int bytesPerRow,
+  void rotate(int orientation, int width, int height, int bytesPerRow,
       Uint8List src, Function(int w, int h, Uint8List pixels) callback) {
     final int w, h;
     if (orientation == 0 || orientation == 180) {
@@ -162,17 +162,17 @@ void _workerMethod(Stream<WorkerData> message) {
     callback(w, h, dst);
   }
 
-  void _scale(int width, int height, int maxWidth, List<int> src,
+  void scale(int width, int height, int maxWidth, List<int> src,
       Function(int w, int h, List<int> pixels) callback) {
     if (maxWidth > 0 && width > maxWidth) {
-      final scale = width / maxWidth;
-      final h = height ~/ scale;
+      final s = width / maxWidth;
+      final h = height ~/ s;
       final dst = List.filled(maxWidth * h, 0);
       for (int y = 0; y < h; y++) {
         final wy = y * maxWidth;
-        final oy = (y * scale).truncate() * width;
+        final oy = (y * s).truncate() * width;
         for (int x = 0; x < maxWidth; x++) {
-          dst[wy + x] = src[oy + (x * scale).truncate()];
+          dst[wy + x] = src[oy + (x * s).truncate()];
         }
       }
       callback(maxWidth, h, dst);
@@ -191,8 +191,8 @@ void _workerMethod(Stream<WorkerData> message) {
       final orientation = data.value['orientation'] as int;
       final maxWidth = data.value['maxWidth'] as int;
 
-      _rotate(orientation, width, height, bytesPerRow, buff, (w, h, pixels) {
-        _scale(w, h, maxWidth, pixels, (w, h, pixels) {
+      rotate(orientation, width, height, bytesPerRow, buff, (w, h, pixels) {
+        scale(w, h, maxWidth, pixels, (w, h, pixels) {
           final res = method.call(Luminances(w, h, Int8List.fromList(pixels)));
           data.callback(res);
         });
