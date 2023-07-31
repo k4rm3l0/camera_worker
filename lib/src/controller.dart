@@ -7,6 +7,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:isoworker/isoworker.dart';
+import 'dart:math';
 
 /// Image width, height, and brightness.
 @immutable
@@ -14,8 +15,9 @@ class Luminances {
   final int width;
   final int height;
   final Int8List luminances;
+  final int lux;
 
-  const Luminances(this.width, this.height, this.luminances);
+  const Luminances(this.width, this.height, this.luminances, this.lux);
 }
 
 /// This is a library that converts streaming images from a camera to luminance
@@ -25,18 +27,23 @@ class WorkerController<T> {
   CameraController? camera;
   IsoWorker? _worker;
   StreamController<T?>? _stream;
+  List<CameraDescription>? cameras;
 
   WorkerController(this.workerMethod);
 
   /// Initializes the camera and worker.
   Future<void> init(
       {ResolutionPreset resolution = ResolutionPreset.veryHigh}) async {
+    await initWithCamera(null);
+  }
+
+  Future<void> initWithCamera(CameraDescription? selectedCamera, {ResolutionPreset resolution = ResolutionPreset.veryHigh}) async {
     _worker ??= await IsoWorker.init(_workerMethod);
-    if (camera != null) return;
-    final cameras = await availableCameras();
-    if (cameras.isEmpty) return;
+    //if (camera != null) return;
+    cameras = await availableCameras();
+    if (cameras!.isEmpty) return;
     camera = CameraController(
-      cameras.first,
+      selectedCamera ?? cameras!.first,
       resolution,
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.yuv420,
@@ -83,6 +90,9 @@ class WorkerController<T> {
         'buff': plane.bytes,
         'orientation': orientation,
         'maxWidth': maxWidth,
+        'lensAperture' : image.lensAperture,
+        'sensorSensitivity' : image.sensorSensitivity,
+        'sensorExposureTime' : image.sensorExposureTime
       }).then((res) {
         final st = _stream;
         if (st != null && !st.isClosed) st.sink.add(res);
@@ -132,7 +142,7 @@ class WorkerController<T> {
 
 /// The worker method used from Isolate.
 void _workerMethod(Stream<WorkerData> message) {
-  void rotate(int orientation, int width, int height, int bytesPerRow,
+  void _rotate(int orientation, int width, int height, int bytesPerRow,
       Uint8List src, Function(int w, int h, Uint8List pixels) callback) {
     final int w, h;
     if (orientation == 0 || orientation == 180) {
@@ -162,17 +172,17 @@ void _workerMethod(Stream<WorkerData> message) {
     callback(w, h, dst);
   }
 
-  void scale(int width, int height, int maxWidth, List<int> src,
+  void _scale(int width, int height, int maxWidth, List<int> src,
       Function(int w, int h, List<int> pixels) callback) {
     if (maxWidth > 0 && width > maxWidth) {
-      final s = width / maxWidth;
-      final h = height ~/ s;
+      final scale = width / maxWidth;
+      final h = height ~/ scale;
       final dst = List.filled(maxWidth * h, 0);
       for (int y = 0; y < h; y++) {
         final wy = y * maxWidth;
-        final oy = (y * s).truncate() * width;
+        final oy = (y * scale).truncate() * width;
         for (int x = 0; x < maxWidth; x++) {
-          dst[wy + x] = src[oy + (x * s).truncate()];
+          dst[wy + x] = src[oy + (x * scale).truncate()];
         }
       }
       callback(maxWidth, h, dst);
@@ -190,10 +200,21 @@ void _workerMethod(Stream<WorkerData> message) {
       final buff = data.value['buff'] as Uint8List;
       final orientation = data.value['orientation'] as int;
       final maxWidth = data.value['maxWidth'] as int;
+      final lensAperture = data.value['lensAperture'] as double;
+      final sensorSensitivity = data.value['sensorSensitivity'] as double;
+      final sensorExposureTime = data.value['sensorExposureTime'] as int;
 
-      rotate(orientation, width, height, bytesPerRow, buff, (w, h, pixels) {
-        scale(w, h, maxWidth, pixels, (w, h, pixels) {
-          final res = method.call(Luminances(w, h, Int8List.fromList(pixels)));
+      double luxValue = (45 * lensAperture * lensAperture) / ((sensorExposureTime/1000000000) * sensorSensitivity);
+
+      luxValue -= 14;
+
+      if(luxValue<0){
+        luxValue = 0;
+      }
+
+      _rotate(orientation, width, height, bytesPerRow, buff, (w, h, pixels) {
+        _scale(w, h, maxWidth, pixels, (w, h, pixels) {
+          final res = method.call(Luminances(w, h, Int8List.fromList(pixels), luxValue.toInt()));
           data.callback(res);
         });
       });
